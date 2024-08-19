@@ -307,7 +307,9 @@ async function handleButtonInteraction(
 	i: ButtonInteraction,
 	guildId: string,
 	player: AudioPlayer,
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	interaction: ChatInputCommandInteraction,
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	playingMessage: unknown
 ) {
 	const queueData = queues.get(guildId)!
