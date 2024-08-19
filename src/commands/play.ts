@@ -9,8 +9,7 @@ import {
 	ButtonInteraction,
 	EmbedBuilder,
 	StringSelectMenuBuilder,
-	StringSelectMenuInteraction,
-	ActivityType
+	StringSelectMenuInteraction
 } from 'discord.js'
 import ytsr from '@distube/ytsr'
 import {
@@ -24,43 +23,48 @@ import {
 	AudioPlayer
 } from '@discordjs/voice'
 import ytdl from '@distube/ytdl-core'
+import { debugLog } from '../utils/debug' // Import debugLog from debug.ts
 
-const queue: string[] = []
-let currentPlayer: AudioPlayer | null = null
-let loopEnabled = false // New variable to track loop state
-const debugMode = true // Enable debugging output
+// Store queues and players per guild (server)
+const queues = new Map<string, { songs: string[]; loopEnabled: boolean }>()
+const players = new Map<string, AudioPlayer>()
 
 // Define buttons and controls upfront
-const createControls = () =>
-	new ActionRowBuilder<ButtonBuilder>().addComponents(
+const createControls = (guildId: string, player: AudioPlayer) => {
+	const queueData = queues.get(guildId)!
+	const isPaused = player.state.status === AudioPlayerStatus.Paused
+
+	return new ActionRowBuilder<ButtonBuilder>().addComponents(
 		new ButtonBuilder()
-			.setCustomId('stop')
+			.setCustomId(`stop-${guildId}`)
 			.setLabel('⏹️ Stop')
 			.setStyle(ButtonStyle.Danger),
 		new ButtonBuilder()
-			.setCustomId('pause')
-			.setLabel('⏸️ Pause')
-			.setStyle(ButtonStyle.Secondary),
+			.setCustomId(`pause-${guildId}`)
+			.setLabel(isPaused ? '▶️ Resume' : '⏸️ Pause')
+			.setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Secondary),
 		new ButtonBuilder()
-			.setCustomId('skip')
+			.setCustomId(`skip-${guildId}`)
 			.setLabel('⏭️ Skip')
 			.setStyle(ButtonStyle.Primary),
 		new ButtonBuilder()
-			.setCustomId('loop')
-			.setLabel(loopEnabled ? '🔁 Loop: On' : '🔁 Loop: Off')
-			.setStyle(loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
+			.setCustomId(`loop-${guildId}`)
+			.setLabel(queueData.loopEnabled ? '🔁 Loop: On' : '🔁 Loop: Off')
+			.setStyle(
+				queueData.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary
+			)
 	)
+}
 
 export const data = new SlashCommandBuilder()
 	.setName('play')
 	.setDescription('Plays a song based on a URL or search query')
-	.addStringOption(
-		(option) =>
-			option
-				.setName('input')
-				.setDescription('The URL of the song you want to play or a search term')
-				.setRequired(true)
-				.setAutocomplete(true) // Enable autocomplete for this option
+	.addStringOption((option) =>
+		option
+			.setName('input')
+			.setDescription('The URL of the song you want to play or a search term')
+			.setRequired(true)
+			.setAutocomplete(true)
 	)
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -69,60 +73,56 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 		return
 	}
 
+	const guildId = interaction.guildId!
 	const input = interaction.options.getString('input')
 
-	if (debugMode) console.log(`Executing play command with input: ${input}`)
+	debugLog(
+		'PLAY',
+		`Executing play command in guild ${guildId} with input: ${input}`
+	)
+
+	// Initialize the queue and loop state for this guild if not already
+	if (!queues.has(guildId)) {
+		queues.set(guildId, { songs: [], loopEnabled: false })
+	}
+
+	const queueData = queues.get(guildId)!
 
 	if (ytdl.validateURL(input!)) {
-		if (debugMode)
-			console.log('Input is a valid YouTube URL, attempting to play directly.')
-		queue.push(input!)
-		if (!currentPlayer) {
+		debugLog(
+			'PLAY',
+			'Input is a valid YouTube URL, attempting to play directly.'
+		)
+		queueData.songs.push(input!)
+		if (!players.get(guildId)) {
 			await playNext(interaction)
 		} else {
 			const songInfo = await ytdl.getInfo(input!)
-
-			const embed = new EmbedBuilder()
-				.setTitle(`Added to Queue: ${songInfo.videoDetails.title}`)
-				.setURL(songInfo.videoDetails.video_url)
-				.setThumbnail(songInfo.videoDetails.thumbnails[0].url)
-				.addFields(
-					{
-						name: 'Duration',
-						value: `${Math.floor(Number(songInfo.videoDetails.lengthSeconds) / 60)}:${Number(songInfo.videoDetails.lengthSeconds) % 60}`,
-						inline: true
-					},
-					{
-						name: 'Channel',
-						value: `${songInfo.videoDetails.author.name}`,
-						inline: true
-					}
-				)
-				.setColor(0x9b30ff)
-
+			const embed = createQueueEmbed(songInfo)
 			await interaction.reply({ embeds: [embed] })
 		}
 	} else {
-		if (debugMode)
-			console.log(
-				'Input is not a valid YouTube URL, treating it as a search term.'
-			)
+		debugLog(
+			'PLAY',
+			'Input is not a valid YouTube URL, treating it as a search term.'
+		)
 		await searchAndSelect(interaction, input!)
 	}
+
+	printDebugQueue()
 }
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
-	if (debugMode) console.log('Autocomplete interaction received')
+	debugLog('SEARCH', 'Received autocomplete interaction.')
 
 	const focusedValue = interaction.options.getFocused()
 
 	if (!focusedValue.trim()) {
-		if (debugMode) console.log('Focused value is empty, skipping autocomplete.')
+		debugLog('SEARCH', 'Empty search query, returning empty list.')
 		return interaction.respond([]) // Return an empty list
 	}
 
-	if (debugMode)
-		console.log(`Autocomplete triggered with focused value: ${focusedValue}`)
+	debugLog('SEARCH', `Autocomplete search query: ${focusedValue}`)
 
 	try {
 		const searchResults = await ytsr(focusedValue, { limit: 5 })
@@ -137,7 +137,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
 		await interaction.respond(choices)
 
-		if (debugMode) console.log('Autocomplete response sent successfully.')
+		debugLog('SEARCH', 'Autocomplete search results:', choices)
 	} catch {
 		console.error('Autocomplete search failed:')
 		await interaction.respond([])
@@ -149,16 +149,14 @@ async function searchAndSelect(
 	query: string
 ) {
 	const searchResults = await ytsr(query, { limit: 5 })
-	const videos = searchResults.items.filter(
-		(item: ytsr.Video) => item.type === 'video'
-	)
+	const videos = searchResults.items.filter((item) => item.type === 'video')
 
 	if (videos.length === 0) {
 		await interaction.reply('No search results found!')
 		return
 	}
 
-	const options = videos.map((video: ytsr.Video) => ({
+	const options = videos.map((video) => ({
 		label: video.name,
 		description: video.duration,
 		value: video.url
@@ -190,8 +188,9 @@ async function searchAndSelect(
 
 		if (selection) {
 			const selectedVideoURL = selection.values[0]
-			await playSong(interaction, selectedVideoURL)
-			await interaction.deleteReply() // Delete the initial message with the dropdown
+			queues.get(interaction.guildId!)!.songs.push(selectedVideoURL)
+			await playNext(interaction)
+			await interaction.deleteReply()
 		}
 	} catch {
 		if (!interaction.replied && !interaction.deferred) {
@@ -201,56 +200,57 @@ async function searchAndSelect(
 			})
 		}
 	}
+
+	printDebugQueue()
 }
 
 async function playNext(interaction: ChatInputCommandInteraction) {
-	if (queue.length === 0) return
+	const guildId = interaction.guildId!
+	const guildQueue = queues.get(guildId)!
+	if (guildQueue.songs.length === 0) return
 
-	const URL = queue.shift()!
+	const URL = guildQueue.songs.shift()!
 	await playSong(interaction, URL)
 }
 
 async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
-	// Check if the interaction has already been deferred
+	const guildId = interaction.guildId!
+
+	// Defer the interaction reply
 	if (!interaction.deferred && !interaction.replied) {
 		await interaction.deferReply()
 	}
 
-	let connection = getVoiceConnection(interaction.guildId!)
+	let connection = getVoiceConnection(guildId)
 	const userChannel = interaction.guild?.members.cache.get(interaction.user.id)
 		?.voice.channel
 
-	// If the bot is not already connected, join the user's channel
-	if (!connection) {
-		if (!userChannel) {
+	// Check if the bot is actually in the voice channel
+	if (
+		!connection ||
+		!userChannel ||
+		connection.joinConfig.channelId !== userChannel.id
+	) {
+		if (userChannel) {
+			connection = joinVoiceChannel({
+				channelId: userChannel.id,
+				guildId: userChannel.guild.id,
+				adapterCreator: userChannel.guild.voiceAdapterCreator
+			})
+		} else {
 			await interaction.editReply('You need to join a voice channel first!')
 			return
 		}
-		connection = joinVoiceChannel({
-			channelId: userChannel.id,
-			guildId: userChannel.guild.id,
-			adapterCreator: userChannel.guild.voiceAdapterCreator
-		})
-	} else {
-		// If the bot is already in a different channel, reply with an error
-		const botChannel = connection.joinConfig.channelId
-		if (userChannel && botChannel !== userChannel.id) {
-			await interaction.editReply('I am already in another voice channel!')
-			return
-		}
 	}
 
-	if (currentPlayer) {
-		currentPlayer.stop() // Stop any currently playing song
+	if (players.get(guildId)) {
+		players.get(guildId)!.stop()
 	}
 
 	const player = createAudioPlayer({
-		behaviors: {
-			noSubscriber: NoSubscriberBehavior.Pause
-		}
+		behaviors: { noSubscriber: NoSubscriberBehavior.Pause }
 	})
-
-	currentPlayer = player
+	players.set(guildId, player)
 
 	try {
 		const songInfo = await ytdl.getInfo(URL)
@@ -259,7 +259,6 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 			quality: 'highestaudio',
 			highWaterMark: 1 << 25
 		})
-
 		const resource = createAudioResource(stream, {
 			inputType: StreamType.Arbitrary
 		})
@@ -267,96 +266,136 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 		player.play(resource)
 		connection.subscribe(player)
 
-		// Update bot presence
-		interaction.client.user?.setActivity(`${songInfo.videoDetails.title}`, {
-			type: ActivityType.Listening
-		})
-
-		const nowPlayingEmbed = new EmbedBuilder()
-			.setTitle(`Now Playing: ${songInfo.videoDetails.title}`)
-			.setURL(songInfo.videoDetails.video_url)
-			.setThumbnail(songInfo.videoDetails.thumbnails[0].url)
-			.addFields(
-				{
-					name: 'Duration',
-					value: `${Math.floor(Number(songInfo.videoDetails.lengthSeconds) / 60)}:${Number(songInfo.videoDetails.lengthSeconds) % 60}`,
-					inline: true
-				},
-				{
-					name: 'Channel',
-					value: `${songInfo.videoDetails.author.name}`,
-					inline: true
-				}
-			)
-			.setColor(0x9b30ff)
-
-		const controls = createControls()
+		const nowPlayingEmbed = createNowPlayingEmbed(songInfo)
+		const controls = createControls(guildId, player) // Pass the player here
 
 		const playingMessage = await interaction.followUp({
 			embeds: [nowPlayingEmbed],
 			components: [controls]
 		})
 
-		// Implement the component collector for button interactions
 		const buttonFilter = (i: ButtonInteraction) =>
-			i.user.id === interaction.user.id
-
+			i.customId.endsWith(guildId) && i.user.id === interaction.user.id
 		const collector = playingMessage.createMessageComponentCollector({
 			filter: buttonFilter,
 			componentType: ComponentType.Button,
 			time: Number(songInfo.videoDetails.lengthSeconds) * 1000
 		})
 
-		collector.on('collect', async (i: ButtonInteraction) => {
-			switch (i.customId) {
-				case 'stop':
-					queue.length = 0 // Clear the queue
-					player.stop()
-					await interaction.client.user?.setActivity('')
-					await i.reply('Stopped the music and cleared the queue.')
-					loopEnabled = false
-					break
-				case 'pause':
-					if (player.state.status === AudioPlayerStatus.Playing) {
-						player.pause()
-						await i.reply('Paused the music.')
-					} else if (player.state.status === AudioPlayerStatus.Paused) {
-						player.unpause()
-						await i.reply('Resumed the music.')
-					}
-					break
-				case 'skip':
-					player.stop() // Stop the current song, automatically plays the next
-					interaction.client.user?.setActivity('')
-					await i.reply('Skipped the song.')
-					loopEnabled = false
-					break
-				case 'loop':
-					loopEnabled = !loopEnabled
-					await i.update({
-						components: [createControls()] // Update the buttons with the new loop state
-					})
-					break
-				default:
-					await i.reply('Invalid button.')
-					break
-			}
-		})
+		collector.on('collect', async (i: ButtonInteraction) =>
+			handleButtonInteraction(i, guildId, player, interaction, playingMessage)
+		)
 
 		player.on(AudioPlayerStatus.Idle, () => {
-			if (loopEnabled) {
-				queue.unshift(URL) // Re-add the current song to the front of the queue
+			if (queues.get(guildId)!.loopEnabled) {
+				queues.get(guildId)!.songs.unshift(URL)
 			}
-			if (queue.length > 0) {
+			if (queues.get(guildId)!.songs.length > 0) {
 				playNext(interaction)
 			} else {
-				currentPlayer = null
+				players.delete(guildId)
 				connection?.disconnect()
-				interaction.client.user?.setActivity('')
 			}
 		})
 	} catch (err) {
-		console.error('Error playing song:', err)
+		debugLog('ERROR', 'Error playing song:', err)
 		await interaction.editReply('Failed to play the song!')
 	}
+}
+
+async function handleButtonInteraction(
+	i: ButtonInteraction,
+	guildId: string,
+	player: AudioPlayer,
+	interaction: ChatInputCommandInteraction,
+	playingMessage: unknown
+) {
+	const queueData = queues.get(guildId)!
+
+	switch (i.customId) {
+		case `stop-${guildId}`:
+			queueData.songs.length = 0
+			player.stop()
+			queueData.loopEnabled = false
+			debugLog(
+				'BUTTON',
+				`Stopped the music and cleared the queue for guild ${guildId}.`
+			)
+			await i.update({
+				content: 'Stopped the music and cleared the queue.',
+				components: []
+			})
+			break
+		case `pause-${guildId}`:
+			debugLog('BUTTON', `Pause button clicked for guild ${guildId}.`)
+			if (player.state.status === AudioPlayerStatus.Playing) {
+				player.pause()
+			} else if (player.state.status === AudioPlayerStatus.Paused) {
+				player.unpause()
+			}
+			await i.update({ components: [createControls(guildId, player)] }) // Update controls to reflect the new state
+			break
+		case `skip-${guildId}`:
+			debugLog('BUTTON', `Skip button clicked for guild ${guildId}.`)
+			player.stop()
+			queueData.loopEnabled = false
+			await i.update({ content: 'Skipped the song.', components: [] })
+			break
+		case `loop-${guildId}`:
+			debugLog('BUTTON', `Loop button clicked for guild ${guildId}.`)
+			queueData.loopEnabled = !queueData.loopEnabled
+			await i.update({
+				content: `Looping is now ${queueData.loopEnabled ? 'enabled' : 'disabled'}.`,
+				components: [createControls(guildId, player)]
+			})
+			break
+	}
+}
+
+function createNowPlayingEmbed(songInfo: ytdl.videoInfo) {
+	return new EmbedBuilder()
+		.setTitle(`Now Playing: ${songInfo.videoDetails.title}`)
+		.setURL(songInfo.videoDetails.video_url)
+		.setThumbnail(songInfo.videoDetails.thumbnails[0].url)
+		.addFields(
+			{
+				name: 'Duration',
+				value: `${Math.floor(Number(songInfo.videoDetails.lengthSeconds) / 60)}:${Number(songInfo.videoDetails.lengthSeconds) % 60}`,
+				inline: true
+			},
+			{
+				name: 'Channel',
+				value: `${songInfo.videoDetails.author.name}`,
+				inline: true
+			}
+		)
+		.setColor(0x9b30ff)
+}
+
+function createQueueEmbed(songInfo: ytdl.videoInfo) {
+	return new EmbedBuilder()
+		.setTitle(`Added to Queue: ${songInfo.videoDetails.title}`)
+		.setURL(songInfo.videoDetails.video_url)
+		.setThumbnail(songInfo.videoDetails.thumbnails[0].url)
+		.addFields(
+			{
+				name: 'Duration',
+				value: `${Math.floor(Number(songInfo.videoDetails.lengthSeconds) / 60)}:${Number(songInfo.videoDetails.lengthSeconds) % 60}`,
+				inline: true
+			},
+			{
+				name: 'Channel',
+				value: `${songInfo.videoDetails.author.name}`,
+				inline: true
+			}
+		)
+		.setColor(0x9b30ff)
+}
+
+// Helper function for debugging the queue state
+function printDebugQueue() {
+	queues.forEach((queueData, guildId) => {
+		debugLog('QUEUE', `Queue for guild ${guildId}:`, queueData.songs)
+		debugLog('QUEUE', `Loop enabled: ${queueData.loopEnabled}`)
+	})
 }

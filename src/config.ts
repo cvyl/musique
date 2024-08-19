@@ -12,3 +12,5 @@ export const config = {
 	DISCORD_ACCESS_TOKEN,
 	DISCORD_CLIENT_ID
 }
+
+export const DEBUG_MODE: boolean = true
