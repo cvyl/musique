@@ -27,7 +27,29 @@ import ytdl from '@distube/ytdl-core'
 
 const queue: string[] = []
 let currentPlayer: AudioPlayer | null = null
+let loopEnabled = false // New variable to track loop state
 const debugMode = true // Enable debugging output
+
+// Define buttons and controls upfront
+const createControls = () =>
+	new ActionRowBuilder<ButtonBuilder>().addComponents(
+		new ButtonBuilder()
+			.setCustomId('stop')
+			.setLabel('⏹️ Stop')
+			.setStyle(ButtonStyle.Danger),
+		new ButtonBuilder()
+			.setCustomId('pause')
+			.setLabel('⏸️ Pause')
+			.setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId('skip')
+			.setLabel('⏭️ Skip')
+			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId('loop')
+			.setLabel(loopEnabled ? '🔁 Loop: On' : '🔁 Loop: Off')
+			.setStyle(loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
+	)
 
 export const data = new SlashCommandBuilder()
 	.setName('play')
@@ -48,12 +70,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	}
 
 	const input = interaction.options.getString('input')
-	const urlPattern = /^https?:\/\/(?:www\.)?.+/
 
 	if (debugMode) console.log(`Executing play command with input: ${input}`)
 
-	if (urlPattern.test(input!)) {
-		if (debugMode) console.log('Input is a URL, attempting to play directly.')
+	if (ytdl.validateURL(input!)) {
+		if (debugMode)
+			console.log('Input is a valid YouTube URL, attempting to play directly.')
 		queue.push(input!)
 		if (!currentPlayer) {
 			await playNext(interaction)
@@ -79,10 +101,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 				.setColor(0x9b30ff)
 
 			await interaction.reply({ embeds: [embed] })
-			updateSkipButton(interaction) // Update the skip button visibility
 		}
 	} else {
-		if (debugMode) console.log('Input is a search term, searching on YouTube.')
+		if (debugMode)
+			console.log(
+				'Input is not a valid YouTube URL, treating it as a search term.'
+			)
 		await searchAndSelect(interaction, input!)
 	}
 }
@@ -193,18 +217,27 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 	}
 
 	let connection = getVoiceConnection(interaction.guildId!)
+	const userChannel = interaction.guild?.members.cache.get(interaction.user.id)
+		?.voice.channel
+
+	// If the bot is not already connected, join the user's channel
 	if (!connection) {
-		const channel = interaction.guild?.members.cache.get(interaction.user.id)
-			?.voice.channel
-		if (!channel) {
+		if (!userChannel) {
 			await interaction.editReply('You need to join a voice channel first!')
 			return
 		}
 		connection = joinVoiceChannel({
-			channelId: channel.id,
-			guildId: channel.guild.id,
-			adapterCreator: channel.guild.voiceAdapterCreator
+			channelId: userChannel.id,
+			guildId: userChannel.guild.id,
+			adapterCreator: userChannel.guild.voiceAdapterCreator
 		})
+	} else {
+		// If the bot is already in a different channel, reply with an error
+		const botChannel = connection.joinConfig.channelId
+		if (userChannel && botChannel !== userChannel.id) {
+			await interaction.editReply('I am already in another voice channel!')
+			return
+		}
 	}
 
 	if (currentPlayer) {
@@ -257,24 +290,7 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 			)
 			.setColor(0x9b30ff)
 
-		const controls = new ActionRowBuilder<ButtonBuilder>().addComponents(
-			new ButtonBuilder()
-				.setCustomId('stop')
-				.setLabel('⏹️ Stop')
-				.setStyle(ButtonStyle.Danger),
-			new ButtonBuilder()
-				.setCustomId('pause')
-				.setLabel('⏸️ Pause')
-				.setStyle(ButtonStyle.Secondary),
-			...(queue.length > 0
-				? [
-						new ButtonBuilder()
-							.setCustomId('skip')
-							.setLabel('⏭️ Skip')
-							.setStyle(ButtonStyle.Primary)
-					]
-				: [])
-		)
+		const controls = createControls()
 
 		const playingMessage = await interaction.followUp({
 			embeds: [nowPlayingEmbed],
@@ -288,178 +304,59 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 		const collector = playingMessage.createMessageComponentCollector({
 			filter: buttonFilter,
 			componentType: ComponentType.Button,
-			time: Number(songInfo.videoDetails.lengthSeconds) * 1000 // Duration of the song in milliseconds
+			time: Number(songInfo.videoDetails.lengthSeconds) * 1000
 		})
 
 		collector.on('collect', async (i: ButtonInteraction) => {
-			await i.deferUpdate() // Immediately acknowledge the interaction
-
-			if (i.customId === 'stop') {
-				player.stop()
-				try {
-					await i.editReply({ content: 'Playback stopped!', components: [] })
-				} catch {
-					console.error(
-						'Message could not be edited. It might have been deleted.'
-					)
-				}
-				currentPlayer = null
-				queue.length = 0 // Clear the queue when stopped
-				interaction.client.user?.setActivity(null) // Clear bot activity
-			} else if (i.customId === 'pause') {
-				if (player.state.status === AudioPlayerStatus.Playing) {
-					player.pause()
-					try {
-						await i.editReply({
-							components: [
-								new ActionRowBuilder<ButtonBuilder>().addComponents(
-									new ButtonBuilder()
-										.setCustomId('stop')
-										.setLabel('⏹️ Stop')
-										.setStyle(ButtonStyle.Danger),
-									new ButtonBuilder()
-										.setCustomId('resume')
-										.setLabel('▶️ Resume')
-										.setStyle(ButtonStyle.Success),
-									...(queue.length > 0
-										? [
-												new ButtonBuilder()
-													.setCustomId('skip')
-													.setLabel('⏭️ Skip')
-													.setStyle(ButtonStyle.Primary)
-											]
-										: [])
-								)
-							]
-						})
-					} catch {
-						console.error(
-							'Message could not be edited. It might have been deleted.'
-						)
+			switch (i.customId) {
+				case 'stop':
+					queue.length = 0 // Clear the queue
+					player.stop()
+					await interaction.client.user?.setActivity('')
+					await i.reply('Stopped the music and cleared the queue.')
+					loopEnabled = false
+					break
+				case 'pause':
+					if (player.state.status === AudioPlayerStatus.Playing) {
+						player.pause()
+						await i.reply('Paused the music.')
+					} else if (player.state.status === AudioPlayerStatus.Paused) {
+						player.unpause()
+						await i.reply('Resumed the music.')
 					}
-				}
-			} else if (i.customId === 'resume') {
-				if (player.state.status === AudioPlayerStatus.Paused) {
-					player.unpause()
-					try {
-						await i.editReply({
-							components: [
-								new ActionRowBuilder<ButtonBuilder>().addComponents(
-									new ButtonBuilder()
-										.setCustomId('stop')
-										.setLabel('⏹️ Stop')
-										.setStyle(ButtonStyle.Danger),
-									new ButtonBuilder()
-										.setCustomId('pause')
-										.setLabel('⏸️ Pause')
-										.setStyle(ButtonStyle.Secondary),
-									...(queue.length > 0
-										? [
-												new ButtonBuilder()
-													.setCustomId('skip')
-													.setLabel('⏭️ Skip')
-													.setStyle(ButtonStyle.Primary)
-											]
-										: [])
-								)
-							]
-						})
-					} catch {
-						console.error(
-							'Message could not be edited. It might have been deleted.'
-						)
-					}
-				}
-			} else if (i.customId === 'skip') {
-				player.stop()
-				if (queue.length > 0) {
-					await playNext(interaction)
-				} else {
-					await i.editReply({
-						content: 'No more songs in the queue.',
-						components: []
+					break
+				case 'skip':
+					player.stop() // Stop the current song, automatically plays the next
+					interaction.client.user?.setActivity('')
+					await i.reply('Skipped the song.')
+					loopEnabled = false
+					break
+				case 'loop':
+					loopEnabled = !loopEnabled
+					await i.update({
+						components: [createControls()] // Update the buttons with the new loop state
 					})
-					currentPlayer = null
-				}
+					break
+				default:
+					await i.reply('Invalid button.')
+					break
 			}
 		})
 
-		player.on(AudioPlayerStatus.Idle, async () => {
+		player.on(AudioPlayerStatus.Idle, () => {
+			if (loopEnabled) {
+				queue.unshift(URL) // Re-add the current song to the front of the queue
+			}
 			if (queue.length > 0) {
-				await playNext(interaction)
+				playNext(interaction)
 			} else {
-				await playingMessage.edit({
-					content: 'Playback finished.',
-					components: []
-				})
-				interaction.client.user?.setActivity(null) // Clear bot activity
 				currentPlayer = null
+				connection?.disconnect()
+				interaction.client.user?.setActivity('')
 			}
 		})
-
-		collector.on('end', async () => {
-			if (playingMessage.editable) {
-				await playingMessage.edit({ components: [] })
-			}
-		})
-	} catch (error) {
-		console.error('Error playing song:', error)
-		await interaction.editReply('There was an error trying to play the song!')
-	}
-}
-
-async function updateSkipButton(interaction: ChatInputCommandInteraction) {
-	if (debugMode)
-		console.log(
-			'Adding skip button and setting behavior based on queue status.'
-		)
-
-	try {
-		const message = await interaction.fetchReply()
-		const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-			new ButtonBuilder()
-				.setCustomId('skip')
-				.setLabel('⏭️ Skip')
-				.setStyle(ButtonStyle.Primary)
-		)
-
-		await message.edit({ components: [actionRow] })
-
-		const buttonFilter = (i: ButtonInteraction) =>
-			i.customId === 'skip' && i.user.id === interaction.user.id
-
-		const collector = message.createMessageComponentCollector({
-			filter: buttonFilter,
-			componentType: ComponentType.Button,
-			time: 60000 // You can adjust the collector timeout if needed
-		})
-
-		collector.on('collect', async (i: ButtonInteraction) => {
-			await i.deferUpdate() // Acknowledge the interaction immediately
-
-			if (queue.length > 0) {
-				// Skip to the next song if the queue is not empty
-				currentPlayer?.stop()
-				await playNext(interaction)
-			} else {
-				// If the queue is empty, stop the current playback
-				currentPlayer?.stop()
-				currentPlayer = null
-				interaction.client.user?.setActivity(null) // Clear bot activity
-
-				try {
-					await i.editReply({
-						content: 'No more songs in the queue. Playback stopped!',
-						components: []
-					})
-				} catch {
-					console.error(
-						'Message could not be edited. It might have been deleted.'
-					)
-				}
-			}
-		})
-	} catch (error) {
-		console.error('Failed to add or update the skip button:', error)
+	} catch (err) {
+		console.error('Error playing song:', err)
+		await interaction.editReply('Failed to play the song!')
 	}
 }
