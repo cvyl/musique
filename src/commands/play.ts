@@ -125,22 +125,38 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 	debugLog('SEARCH', `Autocomplete search query: ${focusedValue}`)
 
 	try {
+		// Fetch search results
 		const searchResults = await ytsr(focusedValue, { limit: 5 })
 		const videos = searchResults.items.filter(
 			(item: ytsr.Video) => item.type === 'video'
 		)
 
+		// Prepare choices for the autocomplete response
 		const choices = videos.map((video: ytsr.Video) => ({
 			name: `${video.name} (${video.duration})`,
 			value: video.url
 		}))
 
+		// Respond to the interaction immediately
 		await interaction.respond(choices)
 
 		debugLog('SEARCH', 'Autocomplete search results:', choices)
-	} catch {
-		console.error('Autocomplete search failed:')
-		await interaction.respond([])
+	} catch (err) {
+		// Log and ignore common errors
+		if (/DiscordAPIError\[(40060|10062|50035|50068)\]/.test(err.toString())) {
+			debugLog(
+				'ERROR',
+				'Failed to respond to autocomplete interaction, this is common and can be ignored:',
+				err
+			)
+		}
+
+		// If an error occurs, respond with an empty list to avoid unhandled interaction errors
+		try {
+			await interaction.respond([])
+		} catch (err) {
+			debugLog('SEARCH', 'Failed to respond to autocomplete interaction:', err)
+		}
 	}
 }
 

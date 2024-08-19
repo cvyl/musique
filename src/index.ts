@@ -1,8 +1,14 @@
-import { Client, Interaction } from 'discord.js'
+import {
+	ActivityType,
+	Client,
+	Interaction,
+	PresenceUpdateStatus
+} from 'discord.js'
 import { commands } from './commands'
 import { deployCommands } from './deploy'
 import { config, DEBUG_MODE } from './config'
 import { debugLog } from './utils/debug'
+import { getVoiceConnection } from '@discordjs/voice'
 
 const client = new Client({
 	intents: [
@@ -16,7 +22,22 @@ const client = new Client({
 })
 
 client.once('ready', () => {
+	debugLog('PREPARE', 'Setting status to idle')
+	client.user.setStatus(PresenceUpdateStatus.Idle)
+	debugLog('PREPARE', 'Leaving all voice channels')
+	getVoiceConnection(client.user.id)?.destroy()
+	debugLog('PREPARE', 'Setting bot activity to null')
 	client.user.setActivity(null)
+	debugLog('PREPARE', 'Setting activity to listening to amount of guilds')
+	client.user.setPresence({
+		activities: [
+			{
+				name: `music on ${client.guilds.cache.size} servers`,
+				type: ActivityType.Listening
+			}
+		],
+		status: PresenceUpdateStatus.Online
+	})
 	if (DEBUG_MODE == false) {
 		console.log('Debug mode is disabled')
 		console.log('This will mean that a lot of debug messages will not be shown')
@@ -59,6 +80,8 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 })
 
 client.on('guildCreate', async (guild) => {
+	debugLog('GUILD_CREATE', 'Joined guild', guild.name, guild.id)
+	debugLog('GUILD_CREATE', 'Deploying commands to guild', guild.id)
 	await deployCommands({ guildId: guild.id })
 })
 
