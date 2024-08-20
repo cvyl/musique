@@ -7,9 +7,7 @@ import {
 	ActionRowBuilder,
 	ComponentType,
 	ButtonInteraction,
-	EmbedBuilder,
-	StringSelectMenuBuilder,
-	StringSelectMenuInteraction
+	EmbedBuilder
 } from 'discord.js'
 import ytsr from '@distube/ytsr'
 import {
@@ -35,24 +33,16 @@ const createControls = (guildId: string, player: AudioPlayer) => {
 	const isPaused = player.state.status === AudioPlayerStatus.Paused
 
 	return new ActionRowBuilder<ButtonBuilder>().addComponents(
-		new ButtonBuilder()
-			.setCustomId(`stop-${guildId}`)
-			.setLabel('⏹️ Stop')
-			.setStyle(ButtonStyle.Danger),
+		new ButtonBuilder().setCustomId(`stop-${guildId}`).setLabel('⏹️ Stop').setStyle(ButtonStyle.Danger),
 		new ButtonBuilder()
 			.setCustomId(`pause-${guildId}`)
 			.setLabel(isPaused ? '▶️ Resume' : '⏸️ Pause')
 			.setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Secondary),
-		new ButtonBuilder()
-			.setCustomId(`skip-${guildId}`)
-			.setLabel('⏭️ Skip')
-			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder().setCustomId(`skip-${guildId}`).setLabel('⏭️ Skip').setStyle(ButtonStyle.Primary),
 		new ButtonBuilder()
 			.setCustomId(`loop-${guildId}`)
 			.setLabel(queueData.loopEnabled ? '🔁 Loop: On' : '🔁 Loop: Off')
-			.setStyle(
-				queueData.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary
-			)
+			.setStyle(queueData.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
 	)
 }
 
@@ -76,10 +66,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	const guildId = interaction.guildId!
 	const input = interaction.options.getString('input')
 
-	debugLog(
-		'PLAY',
-		`Executing play command in guild ${guildId} with input: ${input}`
-	)
+	debugLog('PLAY', `Executing play command in guild ${guildId} with input: ${input}`)
 
 	// Initialize the queue and loop state for this guild if not already
 	if (!queues.has(guildId)) {
@@ -89,10 +76,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 	const queueData = queues.get(guildId)!
 
 	if (ytdl.validateURL(input!)) {
-		debugLog(
-			'PLAY',
-			'Input is a valid YouTube URL, attempting to play directly.'
-		)
+		debugLog('PLAY', 'Input is a valid YouTube URL, attempting to play directly.')
 		queueData.songs.push(input!)
 		if (!players.get(guildId)) {
 			await playNext(interaction)
@@ -102,11 +86,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			await interaction.reply({ embeds: [embed] })
 		}
 	} else {
-		debugLog(
-			'PLAY',
-			'Input is not a valid YouTube URL, treating it as a search term.'
-		)
-		await searchAndSelect(interaction, input!)
+		debugLog('PLAY', 'Input is not a valid YouTube URL, treating it as a search term.')
 	}
 
 	printDebugQueue()
@@ -126,10 +106,8 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 
 	try {
 		// Fetch search results
-		const searchResults = await ytsr(focusedValue, { limit: 5 })
-		const videos = searchResults.items.filter(
-			(item: ytsr.Video) => item.type === 'video'
-		)
+		const searchResults = await ytsr(focusedValue, { limit: 10 })
+		const videos = searchResults.items.filter((item: ytsr.Video) => item.type === 'video')
 
 		// Prepare choices for the autocomplete response
 		const choices = videos.map((video: ytsr.Video) => ({
@@ -140,15 +118,11 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 		// Respond to the interaction immediately
 		await interaction.respond(choices)
 
-		debugLog('SEARCH', 'Autocomplete search results:', choices)
+		debugLog('SEARCH', 'Autocomplete search results:', '\n\t=>', choices.map((choice) => choice.name).join('\n\t=> '))
 	} catch (err) {
 		// Log and ignore common errors
 		if (/DiscordAPIError\[(40060|10062|50035|50068)\]/.test(err.toString())) {
-			debugLog(
-				'ERROR',
-				'Failed to respond to autocomplete interaction, this is common and can be ignored:',
-				err
-			)
+			debugLog('ERROR', 'Failed to respond to autocomplete interaction, this is common and can be ignored:', err)
 		}
 
 		// If an error occurs, respond with an empty list to avoid unhandled interaction errors
@@ -158,66 +132,6 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
 			debugLog('SEARCH', 'Failed to respond to autocomplete interaction:', err)
 		}
 	}
-}
-
-async function searchAndSelect(
-	interaction: ChatInputCommandInteraction,
-	query: string
-) {
-	const searchResults = await ytsr(query, { limit: 5 })
-	const videos = searchResults.items.filter((item) => item.type === 'video')
-
-	if (videos.length === 0) {
-		await interaction.reply('No search results found!')
-		return
-	}
-
-	const options = videos.map((video) => ({
-		label: video.name,
-		description: video.duration,
-		value: video.url
-	}))
-
-	const selectMenu = new StringSelectMenuBuilder()
-		.setCustomId('song_select')
-		.setPlaceholder('Choose a song...')
-		.addOptions(options)
-
-	const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-		selectMenu
-	)
-
-	await interaction.reply({
-		content: 'Select a song from the dropdown list:',
-		components: [row]
-	})
-
-	const filter = (i: StringSelectMenuInteraction) =>
-		i.customId === 'song_select' && i.user.id === interaction.user.id
-
-	try {
-		const selection = await interaction.channel?.awaitMessageComponent({
-			filter,
-			componentType: ComponentType.StringSelect,
-			time: 15000
-		})
-
-		if (selection) {
-			const selectedVideoURL = selection.values[0]
-			queues.get(interaction.guildId!)!.songs.push(selectedVideoURL)
-			await playNext(interaction)
-			await interaction.deleteReply()
-		}
-	} catch {
-		if (!interaction.replied && !interaction.deferred) {
-			await interaction.editReply({
-				content: 'Selection timed out!',
-				components: []
-			})
-		}
-	}
-
-	printDebugQueue()
 }
 
 async function playNext(interaction: ChatInputCommandInteraction) {
@@ -238,15 +152,10 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 	}
 
 	let connection = getVoiceConnection(guildId)
-	const userChannel = interaction.guild?.members.cache.get(interaction.user.id)
-		?.voice.channel
+	const userChannel = interaction.guild?.members.cache.get(interaction.user.id)?.voice.channel
 
 	// Check if the bot is actually in the voice channel
-	if (
-		!connection ||
-		!userChannel ||
-		connection.joinConfig.channelId !== userChannel.id
-	) {
+	if (!connection || !userChannel || connection.joinConfig.channelId !== userChannel.id) {
 		if (userChannel) {
 			connection = joinVoiceChannel({
 				channelId: userChannel.id,
@@ -254,6 +163,7 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 				adapterCreator: userChannel.guild.voiceAdapterCreator
 			})
 		} else {
+			debugLog('ERROR', `User ${interaction.user.id} in guild ${guildId} is not in a voice channel!`)
 			await interaction.editReply('You need to join a voice channel first!')
 			return
 		}
@@ -290,8 +200,7 @@ async function playSong(interaction: ChatInputCommandInteraction, URL: string) {
 			components: [controls]
 		})
 
-		const buttonFilter = (i: ButtonInteraction) =>
-			i.customId.endsWith(guildId) && i.user.id === interaction.user.id
+		const buttonFilter = (i: ButtonInteraction) => i.customId.endsWith(guildId) && i.user.id === interaction.user.id
 		const collector = playingMessage.createMessageComponentCollector({
 			filter: buttonFilter,
 			componentType: ComponentType.Button,
@@ -335,10 +244,7 @@ async function handleButtonInteraction(
 			queueData.songs.length = 0
 			player.stop()
 			queueData.loopEnabled = false
-			debugLog(
-				'BUTTON',
-				`Stopped the music and cleared the queue for guild ${guildId}.`
-			)
+			debugLog('BUTTON', `Stopped the music and cleared the queue for guild ${guildId}.`)
 			await i.update({
 				content: 'Stopped the music and cleared the queue.',
 				components: []

@@ -14,4 +14,5 @@ export const config = {
 }
 
 export const DEBUG_MODE: boolean = true
+export const SAVE_TO_FILE: boolean = true
 export const BOT_NAME: string = 'Musique'

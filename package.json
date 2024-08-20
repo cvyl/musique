@@ -42,6 +42,7 @@
 		"play-dl": "^1.9.7",
 		"prettier": "^3.3.3",
 		"simple-git-hooks": "^2.11.1",
+		"spotify-url-info": "^3.2.16",
 		"tsx": "^4.17.0",
 		"typescript": "^5.5.4"
 	},

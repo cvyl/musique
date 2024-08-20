@@ -3,7 +3,7 @@ import { DEBUG_MODE } from '../config'
 /**
  * Logs a debug message with a custom prefix if debug mode is enabled.
  * @param {string} category - The category of the debug message (e.g., PLAY, SEARCH, ERROR, etc.).
- * @param {...any} message - The message(s) to log.
+ * @param {...unknown} message - The message(s) to log.
  */
 export function debugLog(category: string, ...message: unknown[]) {
 	if (DEBUG_MODE) {
@@ -28,9 +28,6 @@ export function debugLog(category: string, ...message: unknown[]) {
 
 		const resetColor = '\x1b[0m'
 		const messageColor = '\x1b[90m' // Gray for message content
-		console.log(
-			`${color}[DEBUG/${category}]${resetColor}${messageColor}`,
-			...message
-		)
+		console.log(`${color}[DEBUG/${category}]${resetColor}${messageColor}`, ...message)
 	}
 }
