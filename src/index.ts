@@ -10,8 +10,6 @@ const client = new Client({
 })
 
 client.once('ready', () => {
-	debugLog('PREPARE', 'Setting status to idle')
-	client.user.setStatus(PresenceUpdateStatus.Idle)
 	debugLog('PREPARE', 'Leaving all voice channels')
 	getVoiceConnection(client.user.id)?.destroy()
 	debugLog('PREPARE', 'Setting bot activity to null')
@@ -44,7 +42,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 			try {
 				await commands[commandName].execute(interaction)
 			} catch (error) {
-				console.error(error)
+				debugLog('ERROR', 'Error while executing command', commandName, error)
 				await interaction.reply({
 					content: 'There was an error while executing this command!',
 					ephemeral: true
@@ -57,17 +55,31 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 			try {
 				await commands[commandName].autocomplete(interaction)
 			} catch (error) {
-				console.error(error)
+				debugLog('ERROR', 'Error while executing autocomplete', commandName, error)
 				await interaction.respond([])
 			}
 		}
 	}
 })
 
+process.on('exit', async () => {
+	debugLog('CLEANUP', 'Exit event triggered')
+	debugLog('CLEANUP', 'Destroying all voice connections')
+	getVoiceConnection(client.user.id)?.destroy()
+	debugLog('CLEANUP', 'Logging out of Discord')
+	await client.destroy()
+	debugLog('CLEANUP', 'Exiting process')
+})
+process.on('SIGINT', process.exit)
+
 client.on('guildCreate', async (guild) => {
 	debugLog('GUILD_CREATE', 'Joined guild', guild.name, guild.id)
 	debugLog('GUILD_CREATE', 'Deploying commands to guild', guild.id)
 	await deployCommands({ guildId: guild.id })
+})
+
+client.on('guildDelete', async (guild) => {
+	debugLog('GUILD_DELETE', 'Left guild', guild.name, guild.id)
 })
 
 client.login(config.DISCORD_ACCESS_TOKEN)
