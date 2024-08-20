@@ -1,9 +1,4 @@
-import {
-	ActivityType,
-	Client,
-	Interaction,
-	PresenceUpdateStatus
-} from 'discord.js'
+import { ActivityType, Client, Interaction, PresenceUpdateStatus } from 'discord.js'
 import { commands } from './commands'
 import { deployCommands } from './deploy'
 import { config, DEBUG_MODE } from './config'
@@ -11,14 +6,7 @@ import { debugLog } from './utils/debug'
 import { getVoiceConnection } from '@discordjs/voice'
 
 const client = new Client({
-	intents: [
-		'Guilds',
-		'GuildMessages',
-		'GuildMessageReactions',
-		'MessageContent',
-		'GuildPresences',
-		'GuildVoiceStates'
-	]
+	intents: ['Guilds', 'GuildMessages', 'GuildMessageReactions', 'MessageContent', 'GuildPresences', 'GuildVoiceStates']
 })
 
 client.once('ready', () => {
@@ -65,10 +53,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 		}
 	} else if (interaction.isAutocomplete()) {
 		const { commandName } = interaction
-		if (
-			commands[commandName as keyof typeof commands] &&
-			commands[commandName].autocomplete
-		) {
+		if (commands[commandName as keyof typeof commands] && commands[commandName].autocomplete) {
 			try {
 				await commands[commandName].autocomplete(interaction)
 			} catch (error) {

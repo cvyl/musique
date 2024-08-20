@@ -28,9 +28,6 @@ export function debugLog(category: string, ...message: unknown[]) {
 
 		const resetColor = '\x1b[0m'
 		const messageColor = '\x1b[90m' // Gray for message content
-		console.log(
-			`${color}[DEBUG/${category}]${resetColor}${messageColor}`,
-			...message
-		)
+		console.log(`${color}[DEBUG/${category}]${resetColor}${messageColor}`, ...message)
 	}
 }
