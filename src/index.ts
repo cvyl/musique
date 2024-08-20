@@ -14,16 +14,7 @@ client.once('ready', () => {
 	getVoiceConnection(client.user.id)?.destroy()
 	debugLog('PREPARE', 'Setting bot activity to null')
 	client.user.setActivity(null)
-	debugLog('PREPARE', 'Setting activity to listening to amount of guilds')
-	client.user.setPresence({
-		activities: [
-			{
-				name: `music on ${client.guilds.cache.size} servers`,
-				type: ActivityType.Listening
-			}
-		],
-		status: PresenceUpdateStatus.Online
-	})
+	updatePresence()
 	if (DEBUG_MODE == false) {
 		console.log('Debug mode is disabled')
 		console.log('This will mean that a lot of debug messages will not be shown')
@@ -72,13 +63,28 @@ process.on('exit', async () => {
 })
 process.on('SIGINT', process.exit)
 
+async function updatePresence() {
+	debugLog('UPDATE_PRESENCE', 'Setting activity to listening to amount of guilds')
+	client.user.setPresence({
+		activities: [
+			{
+				name: `music on ${client.guilds.cache.size} servers`,
+				type: ActivityType.Listening
+			}
+		],
+		status: PresenceUpdateStatus.Online
+	})
+}
+
 client.on('guildCreate', async (guild) => {
+	updatePresence()
 	debugLog('GUILD_CREATE', 'Joined guild', guild.name, guild.id)
 	debugLog('GUILD_CREATE', 'Deploying commands to guild', guild.id)
 	await deployCommands({ guildId: guild.id })
 })
 
 client.on('guildDelete', async (guild) => {
+	updatePresence()
 	debugLog('GUILD_DELETE', 'Left guild', guild.name, guild.id)
 })
 
