@@ -62,6 +62,8 @@ process.on('exit', async () => {
 	debugLog('CLEANUP', 'Exiting process')
 })
 process.on('SIGINT', process.exit)
+process.on('SIGQUIT', process.exit)
+process.on('SIGTERM', process.exit)
 
 async function updatePresence() {
 	debugLog('UPDATE_PRESENCE', 'Setting activity to listening to amount of guilds')
